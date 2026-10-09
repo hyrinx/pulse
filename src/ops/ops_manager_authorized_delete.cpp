@@ -4,6 +4,7 @@
 #include "transfer_rate_estimator.h"
 #include "../common/localization.h"
 #include "../common/runtime_log.h"
+#include <sherrors.h>
 
 namespace pulse::ops {
 namespace {
@@ -12,7 +13,30 @@ bool PermissionFailure(HRESULT hr) {
         hr == HRESULT_FROM_WIN32(ERROR_ELEVATION_REQUIRED) ||
         hr == static_cast<HRESULT>(0x80270021L) || hr == static_cast<HRESULT>(0x80270022L);
 }
+// Localized text for the failures users actually hit; the elevated helper
+// has no localization and FormatMessage knows nothing about COPYENGINE_E_*.
+std::wstring KnownDeleteError(HRESULT hr) {
+    switch (static_cast<uint32_t>(hr)) {
+    case 0x80070005u:  // E_ACCESSDENIED
+    case 0x80270021u:  // COPYENGINE_E_ACCESS_DENIED_SRC
+    case 0x80270022u:  // COPYENGINE_E_ACCESS_DENIED_DEST
+        return l10n::Pick(L"访问被拒绝。该项目可能受系统保护、权限设置不允许删除，或正被其他程序使用。",
+                          L"Access denied. The item may be protected, its permissions may not allow deletion, or another program may be using it.");
+    case 0x80070020u:  // ERROR_SHARING_VIOLATION
+    case 0x80070021u:  // ERROR_LOCK_VIOLATION
+    case 0x80270027u:  // COPYENGINE_E_SHARING_VIOLATION_SRC
+    case 0x80270028u:  // COPYENGINE_E_SHARING_VIOLATION_DEST
+        return l10n::Pick(L"该项目正被其他程序使用。关闭相关程序后重试。",
+                          L"The item is in use by another program. Close it and try again.");
+    case static_cast<uint32_t>(COPYENGINE_E_RECYCLE_BIN_NOT_FOUND):
+        return l10n::Pick(L"此位置无法安全地移到回收站，项目未被删除。",
+                          L"This location cannot be safely sent to the Recycle Bin. The item was not deleted.");
+    default:
+        return {};
+    }
+}
 std::wstring DeleteError(const ShellTransferResult& result) {
+    if (auto known = KnownDeleteError(result.hr); !known.empty()) return known;
     if (!result.error.empty()) return result.error;
     if (result.hr == HRESULT_FROM_WIN32(ERROR_CANCELLED))
         return l10n::Pick(L"未获得管理员权限。可以重试授权，或跳过当前项。",
@@ -23,7 +47,11 @@ std::wstring DeleteError(const ShellTransferResult& result) {
             FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, static_cast<DWORD>(result.hr), 0,
             reinterpret_cast<LPWSTR>(&text), 0, nullptr) && text) error = text;
     if (text) LocalFree(text);
-    return error.empty() ? l10n::Pick(L"无法删除当前项", L"Could not delete this item") : error;
+    if (!error.empty()) return error;
+    wchar_t code[16];
+    swprintf_s(code, L"0x%08X", static_cast<unsigned>(result.hr));
+    return std::wstring(l10n::Pick(L"无法删除当前项（错误 ", L"Could not delete this item (error ")) + code +
+           l10n::Pick(L"）。", L").");
 }
 }
 
@@ -59,18 +87,30 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
             status.last_error.clear();
             status.phase = OpPhase::Running;
         });
+        // After "Retry", stay on the authorization view until the attempt
+        // actually deletes something or ends; the helper's "ready" signal and
+        // its initial 0% progress otherwise flash the progress/estimate view
+        // just before the same error brings the authorization view back.
+        bool retrying = false;
         ElevatedTransferCallbacks callbacks;
         callbacks.authorization = [&](bool awaiting) {
+            if (retrying && !awaiting) return;
             SetStatus([&](OpStatus& status) {
                 status.authorization = awaiting ? AuthorizationState::Requesting : AuthorizationState::None;
+                status.authorization_retrying = false;
                 status.summary = awaiting
                     ? l10n::Pick(L"正在请求管理员授权…", L"Requesting administrator permission…")
                     : l10n::Pick(L"正在删除…", L"Deleting…");
             });
         };
         auto progress = [&](const std::wstring& item, float percent) {
+            if (retrying) {
+                if (percent <= 0) return;
+                retrying = false;
+            }
             SetStatus([&](OpStatus& status) {
                 status.authorization = AuthorizationState::None;
+                status.authorization_retrying = false;
                 status.current_item = item.empty() ? source : item;
                 status.completed_items = completed.size();
                 status.percent = req.sources.empty() ? 0.0f :
@@ -99,7 +139,7 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
             if (SUCCEEDED(result.hr) || result.mutated || transfer_cancel_.load() || !authorized) break;
             authorization_error = DeleteError(result);
             const auto choice = WaitForAuthorization(task_id, authorization_error, source);
-            if (choice == AuthorizationChoice::Retry) continue;
+            if (choice == AuthorizationChoice::Retry) { retrying = true; continue; }
             if (choice == AuthorizationChoice::Skip) {
                 ++skipped;
                 defer_authorization = true;
@@ -112,6 +152,7 @@ void OpsManager::RunAuthorizedDelete(const OpRequest& req, uint64_t task_id) {
             // A retried attempt on a reused elevated session never invokes the
             // authorization callback, so leave the Requesting view explicitly.
             status.authorization = AuthorizationState::None;
+            status.authorization_retrying = false;
             status.completed_items = completed.size();
             update_rate(status);
         });

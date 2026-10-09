@@ -497,6 +497,20 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     }
                 }
             } else if (vm.settings_page == 2) {
+                // Pulse menu card: presets 60-62, tabs 64-66, restore 67.
+                for(int i=0;i<3;++i) {
+                    if(ContainsPt(lay.pulse_preset[i],x,y)) {r.region=HitTestResult::SettingsToggle;r.index=60+i;return r;}
+                    if(ContainsPt(lay.pulse_tab[i],x,y)) {r.region=HitTestResult::SettingsToggle;r.index=64+i;return r;}
+                }
+                if(ContainsPt(lay.pulse_restore,x,y)) {r.region=HitTestResult::SettingsToggle;r.index=67;return r;}
+                // Preview rows: press to drag (kSettingsMenuRowHit + item);
+                // the fixed rows only report hover. 68 restores the tab's order.
+                if(ContainsPt(lay.pulse_order_reset,x,y)) {r.region=HitTestResult::SettingsToggle;r.index=kSettingsMenuOrderReset;return r;}
+                if(ContainsPt(lay.pulse_preview,x,y)) {
+                    WindowViewModel still=vm;still.settings_menu_drag=-1;
+                    for(const auto& row:LayoutPulsePreview(still,PulsePreviewBox(lay.pulse_preview,scale_),scale_).rows)
+                        if(ContainsPt(row.rect,x,y)) {r.region=HitTestResult::SettingsToggle;r.index=PulseMenuRowHit(row.row);return r;}
+                }
                 for(int g=0;g<SettingsLayout::kContextCards;++g) {
                     if(g<5 && ContainsPt(lay.context_toggle[g],x,y)) {r.region=HitTestResult::SettingsToggle;r.index=10+g;return r;}
                     if(ContainsPt(lay.context_header[g],x,y)) {r.region=HitTestResult::SettingsDisclosure;r.index=8+g;return r;}
@@ -968,6 +982,21 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
     D2D1_RECT_F content = ContentRect(rect.right, rect.bottom);
     if (x < content.left || x >= content.right || y < content.top || y >= content.bottom) return r;
 
+    // The swap button only exists while its divider (or the button) is hovered,
+    // so it never takes clicks meant for the pane edges underneath.
+    if (vm.hover_region == static_cast<int>(HitTestResult::Splitter) && !vm.splitter_pressed) {
+        for (int i = 0; i < static_cast<int>(vm.splitters.size()); ++i) {
+            const auto& sp = vm.splitters[static_cast<size_t>(i)];
+            if (sp.swap_rect.right <= sp.swap_rect.left) continue;
+            if (vm.hover_control_index != i && vm.hover_control_index != kSplitterSwapIndex + i) continue;
+            if (x >= sp.swap_rect.left && x < sp.swap_rect.right &&
+                y >= sp.swap_rect.top && y < sp.swap_rect.bottom) {
+                r.region = HitTestResult::Splitter;
+                r.index = kSplitterSwapIndex + i;
+                return r;
+            }
+        }
+    }
     for (int i = 0; i < static_cast<int>(vm.splitters.size()); ++i) {
         const auto& sp = vm.splitters[static_cast<size_t>(i)];
         if (x >= sp.hit_rect.left && x < sp.hit_rect.right &&

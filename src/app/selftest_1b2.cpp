@@ -2710,6 +2710,69 @@ void TestContextMenuPrefs() {
                   BuiltinItemForCommand(CmdUnpinQuickAccess) == BuiltinMenuItem::QuickAccess,
               L"menu: 打开 and 属性 can never be hidden");
 
+        // Drag-to-reorder on the settings preview: per-surface order, saved
+        // by key, applied by moving rows among their slots.
+        auto copy_first = BuiltinMenuDefaultOrder(BuiltinMenuSurface::Item);
+        copy_first.erase(std::find(copy_first.begin(), copy_first.end(), BuiltinMenuItem::CopyPath));
+        copy_first.insert(copy_first.begin(), BuiltinMenuItem::CopyPath);
+        ContextMenuPrefs ordered;
+        ordered.persist = false;
+        ordered.SetBuiltinOrder(BuiltinMenuSurface::Item, copy_first);
+        ContextMenuPrefs ordered_read;
+        ordered_read.persist = false;
+        Check(ordered_read.FromJson(ordered.ToJson()) &&
+                  ordered_read.BuiltinOrder(BuiltinMenuSurface::Item) == copy_first &&
+                  ordered_read.BuiltinOrderCustom(BuiltinMenuSurface::Item) &&
+                  !ordered_read.BuiltinOrderCustom(BuiltinMenuSurface::Background),
+              L"prefs: a moved Pulse menu order round-trips per surface");
+        ContextMenuPrefs default_order;
+        default_order.persist = false;
+        default_order.SetBuiltinOrder(BuiltinMenuSurface::Item, BuiltinMenuDefaultOrder(BuiltinMenuSurface::Item));
+        Check(default_order.builtin_order[0].empty() && default_order.ToJson().find(L"open_new_tab,") == std::wstring::npos,
+              L"prefs: the table order is stored as no order");
+        const auto cleaned = NormalizeBuiltinMenuOrder(BuiltinMenuSurface::Background,
+            { BuiltinMenuItem::Undo, BuiltinMenuItem::Undo, BuiltinMenuItem::RowStar });
+        Check(cleaned.size() == BuiltinMenuDefaultOrder(BuiltinMenuSurface::Background).size() &&
+                  cleaned.front() == BuiltinMenuItem::Undo &&
+                  std::count(cleaned.begin(), cleaned.end(), BuiltinMenuItem::Undo) == 1 &&
+                  std::find(cleaned.begin(), cleaned.end(), BuiltinMenuItem::RowStar) == cleaned.end(),
+              L"prefs: a saved order drops repeats and foreign rows and refills missing ones");
+
+        auto moved = BuildItemMenu(true, L"", true);
+        ApplyBuiltinMenuPrefs(moved, ordered, BuiltinMenuSurface::Item);
+        const std::vector<int> moved_ids{ CmdOpen, CmdNone, CmdCopyPath, CmdOpenInNewTab, CmdOpenTerminal,
+                                          CmdProperties, CmdPinWorkspace, CmdPinNetwork, CmdTags, CmdUndo };
+        bool moved_ok = moved.size() == moved_ids.size();
+        for (size_t i = 0; moved_ok && i < moved.size(); ++i) moved_ok = moved[i].command == moved_ids[i];
+        Check(moved_ok && moved[5].separator_after && !moved[2].separator_after,
+              L"menu: a moved Pulse command takes its new place, groups keep their separators");
+
+        auto undo_first = BuiltinMenuDefaultOrder(BuiltinMenuSurface::Item);
+        undo_first.erase(std::find(undo_first.begin(), undo_first.end(), BuiltinMenuItem::Undo));
+        undo_first.insert(undo_first.begin(), BuiltinMenuItem::Undo);
+        ContextMenuPrefs undo_prefs;
+        undo_prefs.persist = false;
+        undo_prefs.SetBuiltinOrder(BuiltinMenuSurface::Item, undo_first);
+        auto undo_menu = BuildItemMenu(true, L"", true);
+        ApplyBuiltinMenuPrefs(undo_menu, undo_prefs, BuiltinMenuSurface::Item);
+        Check(undo_menu.size() == moved_ids.size() && undo_menu[2].command == CmdUndo &&
+                  !undo_menu[2].separator_after && undo_menu.back().command == CmdTags &&
+                  !undo_menu.back().separator_after,
+              L"menu: separators stay with their slot when the last row moves up");
+        auto plain = BuildItemMenu(true, L"", true);
+        ApplyBuiltinMenuPrefs(plain, undo_prefs);
+        Check(plain.size() == moved_ids.size() && plain.back().command == CmdUndo,
+              L"menu: without a surface the order is left alone");
+
+        const auto visible = BuiltinMenuVisibleRows(BuiltinMenuSurface::Item, 0, undo_first);
+        Check(visible.size() > 3 && visible[2].row.item == BuiltinMenuItem::Undo &&
+                  !visible.back().separator_after,
+              L"preview: rows follow the saved order");
+        Check(RowActionMask(0, { BuiltinMenuItem::RowMore, BuiltinMenuItem::RowStar, BuiltinMenuItem::RowNewTab }) ==
+                  (kRowActionsAll | ((2u | (0u << 2) | (1u << 4)) << kRowActionOrderShift)) &&
+                  RowActionMask(0, BuiltinMenuDefaultOrder(BuiltinMenuSurface::RowButtons)) == kRowActionsAll,
+              L"prefs: the row buttons carry their order to the renderer");
+
         builtin.ResetToDefaults();
         Check(builtin.builtin_hidden == 0, L"prefs: restore defaults shows every Pulse command again");
         ContextMenuPrefs legacy;

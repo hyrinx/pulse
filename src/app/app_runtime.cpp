@@ -697,6 +697,22 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             }
             // Pulse's own commands: card 5, after the seen catalog (see
             // SettingsController::ToggleUi).
+            vm.settings_builtin_first = vm.settings_items.size();
+            vm.settings_builtin_hidden = s.ctxMenuPrefs.builtin_hidden;
+            vm.settings_context_tab = s.settings.ContextTab();
+            static const int shot_context_tab = [] {
+                wchar_t v[4]{};
+                const DWORD n = GetEnvironmentVariableW(L"PULSE_SHOT_CONTEXT_TAB", v, 4);
+                return n == 1 && v[0] >= L'0' && v[0] <= L'2' ? v[0] - L'0' : -1;
+            }();
+            if (shot_context_tab >= 0) vm.settings_context_tab = shot_context_tab;
+            for (int i = 0; i < static_cast<int>(app::BuiltinMenuSurface::Count); ++i)
+                vm.settings_builtin_order[i] = s.ctxMenuPrefs.BuiltinOrder(static_cast<app::BuiltinMenuSurface>(i));
+            if (s.settings.menu_drag_live()) {
+                vm.settings_menu_drag = s.settings.menu_drag_item();
+                vm.settings_menu_drag_pos = s.settings.menu_drag_pos();
+                vm.settings_menu_drag_grab = s.settings.menu_drag_grab();
+            }
             for (int i = 0; i < app::kBuiltinMenuItemCount; ++i) {
                 const auto item = static_cast<app::BuiltinMenuItem>(i);
                 ui::SettingsRowView row;
@@ -825,6 +841,15 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
         view.hit_rect = sp.hit_rect;
         view.parent_bounds = sp.parent_bounds;
         view.vertical = (sp.orientation == app::SplitOrientation::Vertical);
+        if (splitters.size() == 1 && laid.size() == 2) {
+            // Level with the pane headers for left/right, centered for top/bottom.
+            const float r = 16.0f * s.scale;
+            const float cx = view.vertical ? (sp.hit_rect.left + sp.hit_rect.right) * 0.5f
+                                           : (sp.parent_bounds.left + sp.parent_bounds.right) * 0.5f;
+            const float cy = view.vertical ? sp.parent_bounds.top + 29.0f * s.scale
+                                           : (sp.hit_rect.top + sp.hit_rect.bottom) * 0.5f;
+            view.swap_rect = D2D1::RectF(cx - r, cy - r, cx + r, cy + r);
+        }
         vm.splitters.push_back(view);
         s.splitterNodes.push_back(sp.node);
     }
@@ -2377,6 +2402,22 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
     vm.hover_region = s.hoverRegion;
     vm.hover_control_index = s.hoverControlIndex;
     vm.hover_sub_index = s.hoverSubIndex;
+    if (s.shot.active && s.isolatedTest) {
+        // Hidden checks of the 右键菜单 preview: PULSE_SHOT_MENU_HOVER=<item>
+        // (or f1 / f2 for the fixed rows) hovers a row; PULSE_SHOT_MENU_DRAG=
+        // <item>,<px> holds it with the pointer at that client coordinate.
+        wchar_t v[32]{};
+        if (GetEnvironmentVariableW(L"PULSE_SHOT_MENU_HOVER", v, ARRAYSIZE(v)) > 0) {
+            vm.hover_region = static_cast<int>(ui::HitTestResult::SettingsToggle);
+            vm.hover_control_index = v[0] == L'f' ? ui::kSettingsMenuFixedHit + _wtoi(v + 1)
+                                                  : ui::kSettingsMenuRowHit + _wtoi(v);
+        }
+        if (GetEnvironmentVariableW(L"PULSE_SHOT_MENU_DRAG", v, ARRAYSIZE(v)) > 0) {
+            wchar_t* end = nullptr;
+            vm.settings_menu_drag = static_cast<int>(wcstol(v, &end, 10));
+            if (end && *end == L',') vm.settings_menu_drag_pos = static_cast<float>(wcstod(end + 1, nullptr));
+        }
+    }
     vm.hover_pane_index = s.hoverPaneIndex;
     vm.column_resize_pressed = s.columnResizing;
     vm.tooltip_text = s.tooltipText;
@@ -2570,7 +2611,11 @@ std::wstring TooltipForHover(AppState& s) {
     case R::PaneViewButton: return text(I::More);
     case R::FilterBox: return text(s.appPrefs.show_hints ? I::TipxFilter : I::FilterCurrent);
     case R::FilterClear: return text(I::Clear);
-    case R::Splitter: return text(I::ResizeSplit);
+    case R::Splitter:
+        if (s.hoverControlIndex >= ui::kSplitterSwapIndex)
+            return text(LayoutOf(s) == app::LayoutPreset::TwoHorizontal ? I::SplitSwapTopBottom
+                                                                         : I::SplitSwapLeftRight);
+        return text(I::ResizeSplit);
     case R::DetailsOpen: return text(I::Open);
     case R::DetailsStar: return text(I::Favorite);
     case R::DetailsMore: return text(I::MoreActions);

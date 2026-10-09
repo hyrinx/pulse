@@ -31,7 +31,8 @@ std::wstring ErrorText(HRESULT hr) {
     std::wstring message;
     if (count && text) message.assign(text, count);
     if (text) LocalFree(text);
-    if (message.empty()) message = L"The item could not be deleted (error " + std::to_wstring(static_cast<unsigned long>(hr)) + L").";
+    // No system text (e.g. COPYENGINE_E_*): leave it empty so the UI side can
+    // describe the HRESULT in the user's language.
     return message;
 }
 // RecycleItem has a recycle-only contract. Unlike a generic DeleteItem request,

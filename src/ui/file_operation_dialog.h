@@ -60,6 +60,17 @@ private:
     D2D1_COLOR_F accent_ = HexColor(0x0078D4);
     int hover_ = 0;
     int pressed_ = 0;
+    // Leaving the authorization view is deferred briefly: a retry that fails
+    // again returns to it within milliseconds, and switching immediately
+    // flashes the progress/estimate view in between.
+    // A retry that fails at once keeps "Retrying..." visible this long so the
+    // click is acknowledged rather than looking ignored.
+    static constexpr ULONGLONG kAuthorizationExitDelayMs = 400;
+    static constexpr ULONGLONG kRetryMinVisibleMs = 350;
+    ops::OpStatus held_status_;
+    bool has_held_status_ = false;
+    ULONGLONG hold_until_ = 0;
+    ULONGLONG retry_shown_tick_ = 0;
 };
 
 struct ConflictDialogResult {

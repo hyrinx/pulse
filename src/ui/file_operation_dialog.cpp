@@ -48,6 +48,8 @@ struct TransferLabels {
     bool show_details = true;
     bool show_retry = false;
     bool show_skip = false;
+    bool actions_enabled = true;   // false while a retry is in flight
+    std::wstring retry_reserve;    // widest retry label, keeps the layout fixed
     bool show_pause = true;
 };
 
@@ -63,7 +65,11 @@ TransferLabels MakeTransferLabels(const ops::OpStatus& status, bool detailed) {
     labels.show_retry = status.active && status.authorization == ops::AuthorizationState::ActionRequired
         && status.phase != ops::OpPhase::Cancelling;
     labels.show_skip = labels.show_retry && status.can_skip_authorization;
+    labels.actions_enabled = !status.authorization_retrying;
     labels.retry = l10n::Get(l10n::StringId::OpRetryAuthorization);
+    const std::wstring retrying = l10n::Pick(L"正在重试…", L"Retrying…");
+    labels.retry_reserve = retrying.size() > labels.retry.size() ? retrying : labels.retry;
+    if (!labels.actions_enabled) labels.retry = retrying;
     labels.skip = l10n::Get(l10n::StringId::OpSkipAuthorization);
     labels.show_pause = !authorization && !emptying && status.active && status.can_pause;
     labels.cancel = status.active && !emptying
@@ -100,7 +106,8 @@ TransferChrome MakeTransferChrome(float scale, float width, float height,
         next_right = chrome.skip.left - gap;
     }
     if (labels.show_retry) {
-        const float retry_w = painter.MeasureButtonWidth(labels.retry, L"\xEA18");
+        const float retry_w = (std::max)(painter.MeasureButtonWidth(labels.retry, L"\xEA18"),
+                                         painter.MeasureButtonWidth(labels.retry_reserve, L"\xEA18"));
         chrome.retry = D2D1::RectF(next_right - retry_w, y0, next_right, y1);
     }
     if (labels.show_details) chrome.details = painter.FitButtonBounds(D2D1::RectF(pad, y0, pad, y1),
@@ -670,6 +677,24 @@ void FileOperationWindow::SetTheme(bool dark, D2D1_COLOR_F accent) {
 
 void FileOperationWindow::Update(const ops::OpStatus& status) {
     const bool new_task = status.task_id != status_.task_id;
+    const ULONGLONG now = GetTickCount64();
+    if (!new_task && status.active && status_.active) {
+        const bool leaving_authorization = status.authorization == ops::AuthorizationState::None &&
+            status_.authorization != ops::AuthorizationState::None;
+        const bool retry_ended = status_.authorization_retrying && !status.authorization_retrying;
+        if (hold_until_ == 0) {
+            if (leaving_authorization) hold_until_ = now + kAuthorizationExitDelayMs;
+            else if (retry_ended) hold_until_ = retry_shown_tick_ + kRetryMinVisibleMs;
+        }
+        if ((leaving_authorization || retry_ended) && now < hold_until_) {
+            held_status_ = status;  // released by the render timer if it sticks
+            has_held_status_ = true;
+            return;
+        }
+    }
+    hold_until_ = 0;
+    has_held_status_ = false;
+    if (status.authorization_retrying && !status_.authorization_retrying) retry_shown_tick_ = now;
     const bool was_active = status_.active;
     if (new_task || status.authorization != status_.authorization) pressed_ = 0;
     status_ = ops::PresentOperationStatus(status);
@@ -743,8 +768,8 @@ int FileOperationWindow::HitTestControl(float x, float y) const {
         painter_, labels);
     if (pulse::ui::ContainsRect(chrome.close, x, y)) return 1;
     if (pulse::ui::ContainsRect(chrome.minimize, x, y)) return 2;
-    if (labels.show_retry && pulse::ui::ContainsRect(chrome.retry, x, y)) return 6;
-    if (labels.show_skip && pulse::ui::ContainsRect(chrome.skip, x, y)) return 7;
+    if (labels.show_retry && labels.actions_enabled && pulse::ui::ContainsRect(chrome.retry, x, y)) return 6;
+    if (labels.show_skip && labels.actions_enabled && pulse::ui::ContainsRect(chrome.skip, x, y)) return 7;
     if (labels.show_pause && pulse::ui::ContainsRect(chrome.pause, x, y)) return 3;
     if (pulse::ui::ContainsRect(chrome.cancel, x, y)) return 4;
     if (labels.show_details && pulse::ui::ContainsRect(chrome.details, x, y)) return 5;
@@ -1035,6 +1060,7 @@ void FileOperationWindow::Render() {
         fluent::ControlState retry_state{};
         retry_state.hovered = hover_ == 6;
         retry_state.pressed = pressed_ == 6;
+        retry_state.enabled = labels.actions_enabled;
         painter_.DrawButton({ chrome.retry, labels.retry, L"\xEA18",
                               fluent::ButtonKind::Primary, retry_state });
     }
@@ -1042,6 +1068,7 @@ void FileOperationWindow::Render() {
         fluent::ControlState skip_state{};
         skip_state.hovered = hover_ == 7;
         skip_state.pressed = pressed_ == 7;
+        skip_state.enabled = labels.actions_enabled;
         painter_.DrawButton({ chrome.skip, labels.skip, {},
                               fluent::ButtonKind::Standard, skip_state });
     }
@@ -1123,6 +1150,10 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
         if (wparam == kRenderTimer && !IsWindowVisible(hwnd_)) {
             KillTimer(hwnd_, kRenderTimer);
             return 0;
+        }
+        if (wparam == kRenderTimer && has_held_status_ && GetTickCount64() >= hold_until_) {
+            const ops::OpStatus held = held_status_;
+            Update(held);
         }
         if (wparam == kRenderTimer) {
             // Only a running operation animates (indeterminate bar, speed

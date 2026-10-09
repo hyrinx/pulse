@@ -21,6 +21,7 @@ AuthorizationChoice OpsManager::WaitForAuthorization(uint64_t task_id,
     }
     SetStatus([&](OpStatus& status) {
         status.authorization = AuthorizationState::ActionRequired;
+        status.authorization_retrying = false;
         status.can_skip_authorization = true;
         status.can_pause = false;
         status.phase = OpPhase::Running;
@@ -41,15 +42,16 @@ AuthorizationChoice OpsManager::WaitForAuthorization(uint64_t task_id,
     diagnostics::runtime::Event("file_operation_permission_choice", {
         {"task", task_id}, {"choice", static_cast<uint32_t>(choice)}});
     SetStatus([&](OpStatus& status) {
-        // Retry keeps the authorization view until the next attempt reports
-        // progress or fails again; dropping to None here briefly exposes the
-        // regular progress/estimate view between the two authorization states.
-        const bool retry = choice == AuthorizationChoice::Retry;
-        status.authorization = retry ? AuthorizationState::Requesting : AuthorizationState::None;
-        status.can_skip_authorization = false;
-        if (retry) {
-            status.percent = -1;
-            status.summary = l10n::Pick(L"正在请求管理员授权…", L"Requesting administrator permission…");
+        // Retry stays on the ActionRequired view (actions disabled) until the
+        // attempt shows a real UAC prompt, makes progress, or fails again.
+        // Switching to Requesting here flashed "authorize in the Windows
+        // prompt" although a reused elevated session shows no prompt at all.
+        if (choice == AuthorizationChoice::Retry) {
+            status.authorization_retrying = true;
+        } else {
+            status.authorization = AuthorizationState::None;
+            status.authorization_retrying = false;
+            status.can_skip_authorization = false;
         }
     });
     return choice;

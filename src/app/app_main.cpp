@@ -494,6 +494,30 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         s->places.Load();
         ProbePinnedNetworks(*s);
         s->ctxMenuPrefs.Load();
+        if (s->isolatedTest) {
+            // GUI verification of the menu settings with a given hidden mask
+            // (decimal), without touching the user's context_menu.json.
+            wchar_t mask[16]{};
+            if (GetEnvironmentVariableW(L"PULSE_TEST_BUILTIN_HIDDEN", mask, ARRAYSIZE(mask)) > 0) {
+                s->ctxMenuPrefs.builtin_hidden = static_cast<uint32_t>(wcstoul(mask, nullptr, 10));
+                s->ctxMenuPrefs.persist = false;
+            }
+            // PULSE_TEST_BUILTIN_ORDER0/1/2: comma-joined row keys per surface.
+            for (int surface = 0; surface < static_cast<int>(app::BuiltinMenuSurface::Count); ++surface) {
+                wchar_t name[32]{};
+                swprintf_s(name, L"PULSE_TEST_BUILTIN_ORDER%d", surface);
+                wchar_t keys[512]{};
+                if (GetEnvironmentVariableW(name, keys, ARRAYSIZE(keys)) == 0) continue;
+                app::BuiltinMenuOrder order;
+                wchar_t* next = nullptr;
+                for (wchar_t* key = wcstok_s(keys, L",", &next); key; key = wcstok_s(nullptr, L",", &next))
+                    for (int i = 0; i < app::kBuiltinMenuItemCount; ++i)
+                        if (app::BuiltinMenuKey(static_cast<app::BuiltinMenuItem>(i)) == key)
+                            order.push_back(static_cast<app::BuiltinMenuItem>(i));
+                s->ctxMenuPrefs.SetBuiltinOrder(static_cast<app::BuiltinMenuSurface>(surface), order);
+                s->ctxMenuPrefs.persist = false;
+            }
+        }
         s->appPrefs.Load();
         NoteRunningVersion(*s);
         if (!s->shot.active && s->appPrefs.theme_mode >= 0) {
@@ -548,7 +572,8 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                                  s->appPrefs.list_size_bar, s->appPrefs.list_tag_name_color,
                                  s->appPrefs.list_selection_outline);
         s->renderer.SetDetailsColumns(s->appPrefs.details_columns);
-        s->renderer.SetRowActions(app::RowActionMask(s->ctxMenuPrefs.builtin_hidden));
+        s->renderer.SetRowActions(app::RowActionMask(s->ctxMenuPrefs.builtin_hidden,
+            s->ctxMenuPrefs.BuiltinOrder(app::BuiltinMenuSurface::RowButtons)));
         s->renderer.SetThumbnailBadges(s->appPrefs.list_thumbnail_badges);
         app::SetFolderSortMode(app::FolderSortModeFromInt(s->appPrefs.folder_sort_mode));
         ui::typography::SetTextRenderMode(static_cast<ui::typography::TextRenderMode>(s->appPrefs.text_render));
@@ -1364,6 +1389,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             return TRUE;
         }
         const bool splitter = s->splitterDragging || hit.region == ui::HitTestResult::Splitter;
+        if (splitter && !s->splitterDragging && hit.index >= ui::kSplitterSwapIndex) {
+            SetCursor(LoadCursorW(nullptr, IDC_HAND));
+            return TRUE;
+        }
         if (splitter) {
             const bool vertical = s->splitterDragging
                 ? (s->splitterOrientation == app::SplitOrientation::Vertical)
@@ -1405,11 +1434,22 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             SetCursor(LoadCursorW(nullptr, IDC_HAND));
             return TRUE;
         }
+        if (s->settings.menu_drag_live()) {
+            // Rows only slide along one axis: up/down, or left/right for 行按钮.
+            SetCursor(LoadCursorW(nullptr, s->settings.ContextTab() == 2 ? IDC_SIZEWE : IDC_SIZENS));
+            return TRUE;
+        }
+        if (hit.region == ui::HitTestResult::SettingsToggle && hit.index >= ui::kSettingsMenuRowHit) {
+            // Hand, not IDC_SIZEALL: some pointer themes draw "move" like "no".
+            SetCursor(LoadCursorW(nullptr, IDC_HAND)); // movable Pulse menu preview row
+            return TRUE;
+        }
         break;
     }
 
     case WM_CANCELMODE:
         HandleSidebarResize(s, hwnd, msg, lParam);
+        if (s) s->settings.EndMenuDrag();
         if (s) { s->detailsPreviewPanning = false; s->renderer.EndDetailsPreviewPan(); }
         if (GetCapture() == hwnd) ReleaseCapture();
         break;
@@ -2215,6 +2255,42 @@ static void ApplyShotTrayAction(AppState& state) {
     }
 }
 
+// GUI verification for two-pane layouts: PULSE_SHOT_SPLIT_PATH opens that
+// folder in a second pane (PULSE_SHOT_SPLIT_STACKED=1: top/bottom instead of
+// left/right; PULSE_SHOT_SPLIT_FOCUS=1 focuses the second pane).
+static void StageSplitShot(AppState& state) {
+    wchar_t second[MAX_PATH]{}, flag[4]{};
+    if (!state.isolatedTest ||
+        !GetEnvironmentVariableW(L"PULSE_SHOT_SPLIT_PATH", second, ARRAYSIZE(second))) return;
+    const bool stacked = GetEnvironmentVariableW(L"PULSE_SHOT_SPLIT_STACKED", flag, ARRAYSIZE(flag)) > 0;
+    ApplyLayoutPreset(state, stacked ? app::LayoutPreset::TwoHorizontal : app::LayoutPreset::TwoVertical);
+    std::vector<app::Pane*> visible;
+    if (Root(state)) Root(state)->CollectPanes(visible);
+    if (visible.size() != 2 || !visible[1]->ActiveTab()) return;
+    app::Tab* tab = visible[1]->ActiveTab();
+    StartLoadingPath(state, *tab, second);
+    if (GetEnvironmentVariableW(L"PULSE_SHOT_SPLIT_FOCUS", flag, ARRAYSIZE(flag)) > 0)
+        FocusPane(state, visible[1]);
+    // PULSE_SHOT_SPLIT_SWAP=1 swaps the panes; PULSE_SHOT_SPLIT_HOVER=1|2 shows the
+    // divider hover (1) or the swap button hover (2).
+    if (GetEnvironmentVariableW(L"PULSE_SHOT_SPLIT_SWAP", flag, ARRAYSIZE(flag)) > 0)
+        SwapSplitPanes(state);
+    if (GetEnvironmentVariableW(L"PULSE_SHOT_SPLIT_HOVER", flag, ARRAYSIZE(flag)) > 0) {
+        state.hoverRegion = static_cast<int>(ui::HitTestResult::Splitter);
+        state.hoverControlIndex = flag[0] == L'2' ? ui::kSplitterSwapIndex : 0;
+    }
+    MSG msg{};
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    while (std::chrono::steady_clock::now() < until && (tab->loading || !tab->snapshot)) {
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        ProcessPendingResults(state);
+        Sleep(20);
+    }
+}
+
 static void StageLinkPillShot(AppState& state) {
     wchar_t mode[24]{}, index[16]{};
     if (!state.isolatedTest || !GetEnvironmentVariableW(L"PULSE_TEST_LINK_PILL_SHOT", mode, ARRAYSIZE(mode)) ||
@@ -2251,6 +2327,7 @@ int ShotModeMain(AppState& state, HWND hwnd) {
     __try {
         WaitForShotReady(state);
         StageTagShotStates(state);
+        StageSplitShot(state);
         if (state.shot_details && state.pane && state.pane->ActiveTab() &&
             state.pane->ActiveTab()->snapshot &&
             !state.pane->ActiveTab()->snapshot->empty()) {
@@ -2781,6 +2858,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
             if (verb_len > 0 && verb_len < ARRAYSIZE(long_verb))
                 shell_rows.push_back({ app::CmdShellStaticBase + 1, long_verb, true });
             app::AppendShellSection(debug_items, shell_rows);
+            if (GetEnvironmentVariableW(L"PULSE_TEST_SPLIT_MENU", quick_menu, ARRAYSIZE(quick_menu)) == 1) {
+                debug_items = app::BuildSplitMenu(static_cast<int>(app::LayoutPreset::TwoVertical));
+                debug_items.back().separator_after = true;
+                ui::FluentMenuItem compare;
+                compare.command = app::CmdCompareToggle;
+                compare.text = l10n::Get(l10n::StringId::CompareMenu);
+                compare.glyph = L"\xE89F";
+                debug_items.push_back(std::move(compare));
+            }
             ok = m.SaveDebugSnapshot(state.menushot_out.c_str(), std::move(debug_items));
         }
         DestroyWindow(hwnd);

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdlib>
 #include <cwchar>
 #include <thread>
@@ -724,6 +725,30 @@ bool SettingsController::SliderValue(int which, int value) {
     return true;
 }
 
+void SettingsController::BeginMenuDrag(int item, float pos, float grab) noexcept {
+    menu_drag_item_ = item;
+    menu_drag_live_ = false;
+    menu_drag_start_ = menu_drag_pos_ = pos;
+    menu_drag_grab_ = grab;
+}
+
+bool SettingsController::MenuDragMove(float pos) noexcept {
+    if (menu_drag_item_ < 0) return false;
+    if (!menu_drag_live_ && std::fabs(pos - menu_drag_start_) < 3.0f) return false;
+    menu_drag_live_ = true;
+    menu_drag_pos_ = pos;
+    return true;
+}
+
+void SettingsController::SetMenuOrder(const BuiltinMenuOrder& order) {
+    if (!context_) return;
+    const auto surface = context_tab_ == 1 ? BuiltinMenuSurface::Background
+                       : context_tab_ == 2 ? BuiltinMenuSurface::RowButtons : BuiltinMenuSurface::Item;
+    context_->SetBuiltinOrder(surface, order);
+    context_->Save();
+    if (surface == BuiltinMenuSurface::RowButtons) Apply(SettingsEffect::ListStyle);
+}
+
 void SettingsController::EndSlider() {
     if (slider_drag_ < 0) return;
     slider_drag_ = -1;
@@ -967,6 +992,23 @@ void SettingsController::ToggleUi(int index) {
         }
         global_search_error_.clear();
         Apply(SettingsEffect::GlobalSearch);
+    } else if (index >= 60 && index < 63) {
+        // Pulse menu presets (精简 / 标准 / 完整).
+        context_->builtin_hidden =
+            BuiltinMenuPresetHidden(static_cast<BuiltinMenuPreset>(index - 60));
+        context_->Save();
+        Apply(SettingsEffect::ListStyle);
+    } else if (index >= 64 && index < 67) {
+        context_tab_ = index - 64;
+    } else if (index == 67) {
+        // The card's 恢复默认 resets Pulse's own rows only: shown and order.
+        context_->builtin_hidden = 0;
+        context_->ResetBuiltinOrder();
+        context_->Save();
+        Apply(SettingsEffect::ListStyle);
+    } else if (index == 68) {
+        // The preview's 恢复默认顺序: the current tab's order only.
+        SetMenuOrder({});
     } else if (index >= 10 && index < 15) {
         static constexpr ipc::CtxMenuGroup groups[] = {
             ipc::CtxMenuGroup::Software, ipc::CtxMenuGroup::OpenWith,

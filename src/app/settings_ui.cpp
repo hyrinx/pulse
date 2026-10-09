@@ -125,6 +125,22 @@ bool TestSettingsFilter(const std::wstring& query,I expected) {
 bool HandleSettingsControl(AppState& s,const H& hit) {
     switch(hit.region) {
     case H::SettingsFind: FindSetting(s);break;
+    case H::SettingsToggle: {
+        // Pulse menu preview: pressing a movable row arms a drag (app_input
+        // follows the pointer and drops); the fixed rows do nothing.
+        if(hit.index<ui::kSettingsMenuFixedHit) return false;
+        if(hit.index<ui::kSettingsMenuRowHit) return true;
+        const auto vm=BuildVm(s,false);
+        const auto rect=D2D1::RectF(0,0,static_cast<float>(s.compositor.Width()),static_cast<float>(s.compositor.Height()));
+        POINT pt{};GetCursorPos(&pt);ScreenToClient(s.hwnd,&pt);
+        const float pos=static_cast<float>(vm.settings_context_tab==2 ? pt.x : pt.y);
+        const int item=hit.index-ui::kSettingsMenuRowHit;
+        const float start=s.renderer.SettingsMenuRowStart(vm,rect,item);
+        if(std::isnan(start)) return true;
+        s.settings.BeginMenuDrag(item,pos,pos-start);
+        SetCapture(s.hwnd);
+        break;
+    }
     case H::SettingsDisclosure: {
         if((hit.index<0 || hit.index>3) && (hit.index<8 || hit.index>13)) return true; // 8-13: 右键菜单 cards
         s.settingsExpanded^=1u<<hit.index;

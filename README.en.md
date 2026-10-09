@@ -92,7 +92,7 @@ The update manifest and installer are fetched through the ghproxy.net and gh-pro
 
 ## Build from source
 
-Requires Windows x64, the Visual Studio C++ tools, CMake 3.25+ and Ninja. Release builds also need PowerShell 7.2+ and Inno Setup 6.
+Requires Windows x64, the Visual Studio C++ tools, CMake 3.25+ and Ninja. Release builds also need PowerShell 7.2+ and Python 3 (to pack the installer).
 
 Development build:
 

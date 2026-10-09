@@ -16,8 +16,8 @@ int RunSettingsWidthBorderTest(AppState& s, const wchar_t* output) {
         log << (ok ? "[PASS] " : "[FAIL] ") << label << '\n';
         if (!ok) ++failures;
     };
-    check((s.settingsExpanded & ui::kSettingsContextExpandedMask) == ui::kSettingsContextExpandedMask,
-        "all context-menu groups start expanded");
+    check((s.settingsExpanded & ui::kSettingsContextExpandedMask) == 0,
+        "third-party context-menu groups start collapsed");
     const float original_scale = s.scale;
     for (float scale : {1.0f, 1.25f, 1.5f, 2.0f}) {
         s.compositor.RecreateTextFormats(scale);
@@ -48,9 +48,9 @@ int RunSettingsWidthBorderTest(AppState& s, const wchar_t* output) {
     const bool enabled = s.ctxMenuPrefs.GroupEnabled(group);
     H hit; hit.region = H::SettingsDisclosure; hit.index = 8;
     HandleSettingsControl(s, hit);
-    check(!(s.settingsExpanded & (1u<<8)), "default-expanded group can be collapsed");
+    check((s.settingsExpanded & (1u<<8)) != 0, "collapsed group can be expanded");
     HandleSettingsControl(s, hit);
-    check((s.settingsExpanded & ui::kSettingsContextExpandedMask) == ui::kSettingsContextExpandedMask &&
+    check((s.settingsExpanded & ui::kSettingsContextExpandedMask) == 0 &&
         s.ctxMenuPrefs.GroupEnabled(group) == enabled, "expansion preserves context-menu preferences");
 
     // Render the real switch painter at fractional offsets and common DPI scales.

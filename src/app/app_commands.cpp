@@ -1354,7 +1354,8 @@ void ShowItemContextMenu(AppState& s, POINT screen_pt) {
     std::wstring undoLabel = s.ops.UndoLabel();
     const auto quick_paths = QuickAccessTargets(tab, false);
     auto base_items = BuildFinderItemMenu(s, s.ops.CanUndo(), undoLabel);
-    app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs);
+    if (!IsRecycleTab(tab)) app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Item);
+    else app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs);
     s.context_menu.OpenMenu(base_items);
     auto display = IsRecycleTab(tab) ? std::move(base_items)
                                      : ExplorerMenu(s, s.context_menu.base_items());
@@ -1415,7 +1416,7 @@ void ShowBackgroundContextMenu(AppState& s, POINT screen_pt) {
     ApplyWorkspacePinLabel(base_items, s);
     const auto quick_paths = QuickAccessTargets(tab, true);
     AppendQuickAccessCommand(s, base_items, quick_paths);
-    app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs);
+    app::ApplyBuiltinMenuPrefs(base_items, s.ctxMenuPrefs, app::BuiltinMenuSurface::Background);
     s.context_menu.OpenMenu(std::move(base_items));
     auto display = ExplorerMenu(s, s.context_menu.base_items());
 
@@ -2412,7 +2413,8 @@ void ApplySettingsEffects(AppState& s, app::SettingsEffect effects) {
                                 s.appPrefs.list_size_bar, s.appPrefs.list_tag_name_color,
                                 s.appPrefs.list_selection_outline);
         s.renderer.SetDetailsColumns(s.appPrefs.details_columns);
-        s.renderer.SetRowActions(app::RowActionMask(s.ctxMenuPrefs.builtin_hidden));
+        s.renderer.SetRowActions(app::RowActionMask(s.ctxMenuPrefs.builtin_hidden,
+            s.ctxMenuPrefs.BuiltinOrder(app::BuiltinMenuSurface::RowButtons)));
         s.renderer.SetThumbnailBadges(s.appPrefs.list_thumbnail_badges);
     }
     if (app::HasEffect(effects, app::SettingsEffect::FolderSort)) {

@@ -139,6 +139,11 @@ int wmain(int argc, wchar_t** argv) {
         status.authorization = ops::AuthorizationState::None;
         status.can_pause = true;
         window.Update(status);
+        // A retry that fails again returns within milliseconds; the dialog
+        // must not flash the progress view for such a brief exit.
+        Check(Access::Button(window, 3).x < 0, "brief authorization exit keeps the authorization view");
+        Sleep(450);
+        window.Update(status);
         Check(Access::Button(window, 3).x >= 0 && Access::Button(window, 5).x >= 0 &&
             Access::Button(window, 6).x < 0 && Access::Button(window, 7).x < 0,
             "normal operation restores original controls");
@@ -147,6 +152,14 @@ int wmain(int argc, wchar_t** argv) {
         window.Update(status);
         Click(window, Access::Button(window, 4));
         Check(pause == 1 && cancel == 1, "normal pause and authorization cancel route unchanged");
+        const POINT enabled_retry = Access::Button(window, 6);
+        status.authorization_retrying = true;
+        window.Update(status);
+        retry = 0;
+        if (enabled_retry.x >= 0) Click(window, enabled_retry);
+        Check(enabled_retry.x >= 0 && retry == 0 && Access::Button(window, 6).x < 0 &&
+              Access::Button(window, 3).x < 0,
+              "retry in flight keeps the authorization view and ignores clicks");
         Check(!window.IsVisible(), "test never displays or activates a user window");
     }
     CoUninitialize();

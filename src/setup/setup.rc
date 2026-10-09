@@ -1,0 +1,3 @@
+// Setup bootstrapper resources (the uninstaller is the same image).
+// setup.ico is generated from src/app/pulse.ico (tools/pack_installer/make_setup_icon.py).
+1 ICON "setup.ico"

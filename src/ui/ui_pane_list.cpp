@@ -1234,10 +1234,25 @@ void MainRenderer::DrawPane(const WindowViewModel& vm, const D2D1_RECT_F& rect, 
             fluent::SplitterSpec spec;
             spec.bounds = sp.hit_rect;
             spec.vertical = sp.vertical;
-            spec.state.hovered = vm.hover_region == static_cast<int>(HitTestResult::Splitter) &&
-                                 vm.hover_control_index == i;
+            const bool on_swap = vm.hover_region == static_cast<int>(HitTestResult::Splitter) &&
+                                 vm.hover_control_index == kSplitterSwapIndex + i;
+            spec.state.hovered = (vm.hover_region == static_cast<int>(HitTestResult::Splitter) &&
+                                  vm.hover_control_index == i) || on_swap;
             spec.state.pressed = vm.splitter_pressed && spec.state.hovered;
             painter_.DrawSplitter(spec);
+            if (spec.state.hovered && !vm.splitter_pressed && sp.swap_rect.right > sp.swap_rect.left &&
+                compositor_ && compositor_->Dc()) {
+                auto* dc = compositor_->Dc();
+                const float r = (sp.swap_rect.right - sp.swap_rect.left) * 0.5f;
+                const auto disc = D2D1::Ellipse(D2D1::Point2F(sp.swap_rect.left + r, sp.swap_rect.top + r), r, r);
+                MakeBrush(dc, on_swap ? theme.fill_input_hover : theme.surface_card, brTextSecondary_);
+                dc->FillEllipse(disc, brTextSecondary_.get());
+                MakeBrush(dc, on_swap ? theme.accent : theme.stroke_card, brTextSecondary_);
+                dc->DrawEllipse(disc, brTextSecondary_.get(), std::max(1.0f, scale_));
+                DrawPaneHeaderIcon(sp.swap_rect, sp.vertical ? PaneHeaderIcon::SwapHorizontal
+                                                             : PaneHeaderIcon::SwapVertical,
+                                   on_swap ? theme.accent : theme.text_secondary);
+            }
         }
         return;
     }

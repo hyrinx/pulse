@@ -36,7 +36,7 @@ try { & "$PSScriptRoot/check_release_payload.ps1" -BuildDir $build | Out-Null }
 catch { $rejected = $_.Exception.Message -like '*embedded selftest*' }
 if (-not $rejected) { throw 'Selftest payload was accepted' }
 Write-Output '[PASS] embedded selftest marker refuses packaging'
-$installer = Get-Content (Join-Path $repo 'installer/PulseSetup.iss') -Raw
+$installer = Get-Content (Join-Path $repo 'tools/pack_installer/pack_installer.py') -Raw
 foreach ($name in $PulseReleaseExecutables) {
     if ($installer -notmatch [regex]::Escape($name)) { throw "Installer payload drift: $name" }
 }

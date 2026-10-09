@@ -157,14 +157,9 @@ if ($Channel -eq 'win81') {
 $licenses = Join-Path $build 'licenses/LumaText'
 New-Item -ItemType Directory -Path $licenses -Force | Out-Null
 Copy-Item -Path (Join-Path $sdkRoot 'share/LumaText/licenses/*') -Destination $licenses
-$iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (-not $iscc) { throw 'Inno Setup 6 is required' }
-$version = (Get-Content version.txt -Raw).Trim()
-$arguments = @("/DAppVersion=$version", "/DBuildDir=$build")
-if ($Channel -eq 'win81') { $arguments += '/DWin81Candidate=1' }
-& $iscc @arguments installer/PulseSetup.iss
-if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
+# Pulse setup: bootstrapper + xz payload (scripts/pack_setup.bat).
+& (Join-Path $repo 'scripts/pack_setup.bat') $build $Channel
+if ($LASTEXITCODE -ne 0) { throw 'Installer packaging failed' }
 # The portable ZIP targets Windows 10/11 x64, so only the normal channel packages it,
 # from the same verified production build as the installer.
 if ($Channel -eq 'windows') {

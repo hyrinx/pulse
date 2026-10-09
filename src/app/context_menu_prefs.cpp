@@ -5,6 +5,7 @@
 #include "../common/json_utils.h"
 #include "../common/utf8_file.h"
 #include <algorithm>
+#include <iterator>
 #include <unordered_set>
 #include <windows.h>
 
@@ -17,6 +18,10 @@ int ClampCap(int v, int lo, int hi, int fallback) {
     if (v < lo || v > hi) return fallback;
     return v;
 }
+
+// context_menu.json "pulse_order" keys, indexed by BuiltinMenuSurface.
+constexpr const wchar_t* kOrderKeys[] = { L"item", L"background", L"row_buttons" };
+static_assert(std::size(kOrderKeys) == static_cast<size_t>(BuiltinMenuSurface::Count));
 
 } // namespace
 
@@ -38,6 +43,7 @@ void ContextMenuPrefs::ResetToDefaults() {
     seen.clear();
     slow_ext.clear();
     builtin_hidden = 0;
+    ResetBuiltinOrder();
 }
 
 bool ContextMenuPrefs::CategoryEnabled(ipc::CtxMenuCategory c) const {
@@ -92,6 +98,26 @@ bool ContextMenuPrefs::RowEnabled(const std::wstring& key, ipc::CtxMenuCategory 
 void ContextMenuPrefs::SetBuiltinVisible(BuiltinMenuItem item, bool on) {
     if (on) builtin_hidden &= ~BuiltinMenuBit(item);
     else builtin_hidden |= BuiltinMenuBit(item);
+}
+
+BuiltinMenuOrder ContextMenuPrefs::BuiltinOrder(BuiltinMenuSurface surface) const {
+    if (surface >= BuiltinMenuSurface::Count) return {};
+    return NormalizeBuiltinMenuOrder(surface, builtin_order[static_cast<size_t>(surface)]);
+}
+
+bool ContextMenuPrefs::BuiltinOrderCustom(BuiltinMenuSurface surface) const {
+    return surface < BuiltinMenuSurface::Count && BuiltinOrder(surface) != BuiltinMenuDefaultOrder(surface);
+}
+
+void ContextMenuPrefs::SetBuiltinOrder(BuiltinMenuSurface surface, const BuiltinMenuOrder& order) {
+    if (surface >= BuiltinMenuSurface::Count) return;
+    auto normalized = NormalizeBuiltinMenuOrder(surface, order);
+    if (normalized == BuiltinMenuDefaultOrder(surface)) normalized.clear();
+    builtin_order[static_cast<size_t>(surface)] = std::move(normalized);
+}
+
+void ContextMenuPrefs::ResetBuiltinOrder() {
+    for (auto& order : builtin_order) order.clear();
 }
 
 void ContextMenuPrefs::SetItemEnabled(const std::wstring& key, bool on) {
@@ -218,7 +244,26 @@ std::wstring ContextMenuPrefs::ToJson() const {
         out += L"\":false";
         first_builtin = false;
     }
-    out += first_builtin ? L"},\n  \"items\":{\n" : L"\n  },\n  \"items\":{\n";
+    out += first_builtin ? L"},\n" : L"\n  },\n";
+    // "pulse_order": comma-joined keys per surface, only when moved.
+    out += L"  \"pulse_order\":{";
+    bool first_order = true;
+    for (int s = 0; s < static_cast<int>(BuiltinMenuSurface::Count); ++s) {
+        const auto surface = static_cast<BuiltinMenuSurface>(s);
+        if (!BuiltinOrderCustom(surface)) continue;
+        out += first_order ? L"\n    \"" : L",\n    \"";
+        out += kOrderKeys[s];
+        out += L"\":\"";
+        bool first_key = true;
+        for (const auto item : BuiltinOrder(surface)) {
+            if (!first_key) out += L",";
+            out += BuiltinMenuKey(item);
+            first_key = false;
+        }
+        out += L"\"";
+        first_order = false;
+    }
+    out += first_order ? L"},\n  \"items\":{\n" : L"\n  },\n  \"items\":{\n";
     size_t n = 0;
     for (const auto& kv : item_enabled) {
         std::wstring key;
@@ -299,6 +344,21 @@ bool ContextMenuPrefs::FromJson(const std::wstring& json) {
         const auto item = static_cast<BuiltinMenuItem>(i);
         if (!pulse::json::ExtractBool(builtin, std::wstring(BuiltinMenuKey(item)), true))
             builtin_hidden |= BuiltinMenuBit(item);
+    }
+    ResetBuiltinOrder();
+    const std::wstring orders = ExtractObject(json, L"pulse_order");
+    for (int s = 0; s < static_cast<int>(BuiltinMenuSurface::Count) && !orders.empty(); ++s) {
+        const std::wstring keys = pulse::json::ExtractString(orders, kOrderKeys[s]);
+        BuiltinMenuOrder order;
+        for (size_t at = 0; at < keys.size();) {
+            size_t end = keys.find(L',', at);
+            if (end == std::wstring::npos) end = keys.size();
+            const std::wstring_view key(keys.data() + at, end - at);
+            for (int i = 0; i < kBuiltinMenuItemCount; ++i)
+                if (BuiltinMenuKey(static_cast<BuiltinMenuItem>(i)) == key) order.push_back(static_cast<BuiltinMenuItem>(i));
+            at = end + 1;
+        }
+        SetBuiltinOrder(static_cast<BuiltinMenuSurface>(s), order);
     }
 
     // Keys are menu ids such as "h:{GUID}" and texts are whatever the menu

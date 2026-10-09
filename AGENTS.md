@@ -39,7 +39,7 @@ cmake --build build --target pulse
 
 `build_release.bat` builds all Release targets; build one target during iteration. For the optional headless suite, configure with `-DPULSE_WITH_SELFTEST=ON`, then run `pulse.exe --selftest` and explicitly wait for it to exit.
 
-`build_installer.bat` builds Release and compiles `dist\PulseSetup-<version>.exe` (Inno Setup 6, `winget install JRSoftware.InnoSetup`); the script is `installer/PulseSetup.iss`. The installer requires admin, optionally registers and starts the `PulseIndex` service for full-disk MFT/USN indexing, and removes it on uninstall. Crash logs live in `%LOCALAPPDATA%\Pulse` (`pulse_crash.log`, `pulse_shell_host.log`) so installed copies under Program Files can write them.
+`build_installer.bat` builds Release and packs `dist\PulseSetup-<version>.exe` with the Pulse setup (`src/setup` bootstrapper + `tools/pack_installer/pack_installer.py`, via `scripts/pack_setup.bat`; needs Python 3). `/skipbuild` packs the existing `build` folder; `build_win81_installer.bat` packs `build-win81` as `-win81`. The installer requires admin, optionally registers and starts the `PulseIndex` service for full-disk MFT/USN indexing, and removes it on uninstall. Crash logs live in `%LOCALAPPDATA%\Pulse` (`pulse_crash.log`, `pulse_shell_host.log`) so installed copies under Program Files can write them.
 
 ## Coding Style & Naming Conventions
 

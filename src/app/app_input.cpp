@@ -960,6 +960,22 @@ LRESULT HandleMouseMove(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             }
         }
 
+        // Pulse menu preview row held on the 右键菜单 page: follow the pointer.
+        if (s->settings.menu_drag_item() >= 0) {
+            if (!(wParam & MK_LBUTTON)) {
+                s->settings.EndMenuDrag(); // capture lost without WM_LBUTTONUP
+                InvalidateRect(hwnd, nullptr, FALSE);
+            } else {
+                const bool horizontal = s->settings.ContextTab() == 2;
+                if (s->settings.MenuDragMove(static_cast<float>(horizontal ? mx : my)))
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                // Captured: no WM_SETCURSOR arrives, so set the drag cursor here.
+                if (s->settings.menu_drag_live())
+                    SetCursor(LoadCursorW(nullptr, horizontal ? IDC_SIZEWE : IDC_SIZENS));
+                return 0;
+            }
+        }
+
         // Press-and-hold on the top staging-tray card: the card follows the
         // pointer; releasing decides between a fling to the back and a spring.
         if (s->trayDrag.pending || s->trayDrag.active) {
@@ -2152,6 +2168,10 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             return 0;
         } else if (hit.region == ui::HitTestResult::Splitter) {
             s->dragPending = false;
+            if (hit.index >= ui::kSplitterSwapIndex) {
+                SwapSplitPanes(*s);
+                return 0;
+            }
             s->splitterDragging = true;
             s->splitterDragIndex = hit.index;
             if (hit.index >= 0 && hit.index < static_cast<int>(vm.splitters.size())) {
@@ -2981,6 +3001,22 @@ LRESULT HandleLButtonUp(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
+            if (s->settings.menu_drag_item() >= 0) {
+                if (s->settings.menu_drag_live()) {
+                    const ui::WindowViewModel vm = BuildVm(*s, false);
+                    const D2D1_RECT_F rect = D2D1::RectF(0, 0, (float)s->compositor.Width(),
+                                                         (float)s->compositor.Height());
+                    const auto order = s->renderer.SettingsMenuDropOrder(vm, rect,
+                        (float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam));
+                    s->settings.EndMenuDrag();
+                    if (!order.empty()) s->settings.SetMenuOrder(order);
+                } else {
+                    s->settings.EndMenuDrag();
+                }
+                if (GetCapture() == hwnd) ReleaseCapture();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (s->trayDrag.pending || s->trayDrag.active) {
                 ReleaseTrayDrag(*s, true);
                 if (GetCapture() == hwnd) ReleaseCapture();
@@ -3714,6 +3750,13 @@ LRESULT HandleMouseWheel(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM
 
 LRESULT HandleKeyDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (!s) return DefWindowProcW(hwnd, msg, wParam, lParam);
+        if (wParam == VK_ESCAPE && s->settings.menu_drag_item() >= 0) {
+            // Esc puts a dragged Pulse menu preview row back.
+            s->settings.EndMenuDrag();
+            if (GetCapture() == hwnd) ReleaseCapture();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         s->blankClickTab = nullptr;
         CancelRenameClick(*s);
         app::Tab* tab = ActiveTab(*s);

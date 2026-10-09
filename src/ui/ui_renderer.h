@@ -20,6 +20,7 @@
 #include "link_pill.h"
 #include "ui_view_morph.h"
 #include "group_wheel.h"
+#include "../app/builtin_menu_items.h"
 #include "details_column_set.h"
 #include "../fs/fs_enum.h"
 #include "../fs/fs_snapshot.h"
@@ -36,10 +37,19 @@
 namespace pulse::app { class PlacesCatalog; }
 
 namespace pulse::ui {
+
+// SettingsToggle indexes of the Pulse menu preview (右键菜单 page): rows
+// are kSettingsMenuRowHit + BuiltinMenuItem, the fixed rows
+// kSettingsMenuFixedHit + BuiltinFixedRow; 68 restores the tab's order.
+inline constexpr int kSettingsMenuFixedHit = 99990;
+inline constexpr int kSettingsMenuRowHit = 100000;
+inline constexpr int kSettingsMenuOrderReset = 68;
 enum class PaneHeaderIcon;
 
 inline constexpr unsigned kSettingsContextExpandedMask = 0x1f00u;
-inline constexpr unsigned kSettingsDefaultExpandedMask = kSettingsContextExpandedMask | 0x7u;
+// Third-party context-menu groups (kSettingsContextExpandedMask) start
+// collapsed under 其他软件添加的项; the Pulse menu card is always open.
+inline constexpr unsigned kSettingsDefaultExpandedMask = 0x7u;
 
 class BloomAccentPicker;
 
@@ -519,7 +529,12 @@ struct SplitterView {
     D2D1_RECT_F hit_rect{};
     D2D1_RECT_F parent_bounds{};
     bool vertical = true; // vertical divider between left/right panes
+    // Two-pane layouts: round swap button shown while the divider is hovered.
+    // Empty otherwise.
+    D2D1_RECT_F swap_rect{};
 };
+// Splitter hit index of the swap button on splitter i: kSplitterSwapIndex + i.
+inline constexpr int kSplitterSwapIndex = 1000;
 
 struct SettingsRowView {
     std::wstring key;
@@ -767,6 +782,19 @@ struct WindowViewModel {
     int settings_language = 0;    // 0 system, 1 zh-CN, 2 zh-TW, 3 en-US
     BloomAccentPicker* settings_bloom = nullptr;
     bool settings_group_on[5] = { true, true, false, false, true };
+    // 本地右键菜单 › Pulse 菜单 card: selected tab (0 on a file, 1 blank area,
+    // 2 row buttons), the hidden-item mask, and where BuiltinMenuItem 0 sits
+    // in settings_items.
+    int settings_context_tab = 0;
+    uint32_t settings_builtin_hidden = 0;
+    size_t settings_builtin_first = 0;
+    // Pulse menu order per BuiltinMenuSurface (normalized), and the preview
+    // row being dragged: BuiltinMenuItem or -1, pointer position in px (y,
+    // or x on the row-buttons tab) and where inside the row it was grabbed.
+    app::BuiltinMenuOrder settings_builtin_order[static_cast<size_t>(app::BuiltinMenuSurface::Count)];
+    int settings_menu_drag = -1;
+    float settings_menu_drag_pos = 0.0f;
+    float settings_menu_drag_grab = 0.0f;
     std::vector<SettingsRowView> settings_items;
     bool settings_index_service = false;
     bool settings_index_installed = false;
@@ -1249,7 +1277,8 @@ public:
     // Default programs changed (SHCNE_ASSOCCHANGED).
     void InvalidateOpenWithIcons() { open_with_icons_.InvalidateAssociations(); }
     // List-row hover buttons the user keeps: bit 0 star, bit 1 new tab, bit 2 more.
-    void SetRowActions(unsigned mask) { row_actions_ = mask & 7u; }
+    // Bits 0-2 visible buttons, bits 3-8 their order (app::RowActionMask).
+    void SetRowActions(unsigned mask) { row_actions_ = mask & 0x1FFu; }
     // Optional details columns (details_column_set.h bits).
     void SetDetailsColumns(uint32_t mask) { details_columns_ = NormalizeDetailsColumns(mask); }
     uint32_t DetailsColumnsMask() const { return details_columns_; }
@@ -1335,6 +1364,11 @@ public:
                           float x, float y) const;
     // Settings slider value under x (0 transparency, 1 blur), clamped to the
     // track so a drag may leave the control.
+    // Pulse menu preview drag: where row `item` starts along the drag axis
+    // (NaN when it is not in the preview), and the order a drop at (x, y)
+    // gives (empty when the pointer is too far outside the preview).
+    float SettingsMenuRowStart(const WindowViewModel& vm, const D2D1_RECT_F& rect, int item);
+    app::BuiltinMenuOrder SettingsMenuDropOrder(const WindowViewModel& vm, const D2D1_RECT_F& rect, float x, float y);
     int SettingsSliderValueAt(const WindowViewModel& vm, const D2D1_RECT_F& rect,
                               int which, float x) const;
 
@@ -1447,6 +1481,7 @@ private:
     void DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& area, const Theme& theme);
     void DrawSettings(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsContext(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
+    void DrawSettingsPulseMenu(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
 

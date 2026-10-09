@@ -92,7 +92,7 @@ Pulse 会在启动后自动检查新版。有更新时，窗口内会出现提�
 
 ## 从源码构建
 
-使用 Windows x64、Visual Studio C++ 工具、CMake 3.25+ 和 Ninja。发布构建另需 PowerShell 7.2+ 与 Inno Setup 6。
+使用 Windows x64、Visual Studio C++ 工具、CMake 3.25+ 和 Ninja。发布构建另需 PowerShell 7.2+ 与 Python 3（打包安装程序）。
 
 开发构建：
 

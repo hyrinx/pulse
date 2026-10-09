@@ -55,6 +55,8 @@ struct ContextMenuPrefs {
     std::unordered_map<std::wstring, SlowComExt> slow_ext;
     // Pulse's own menu rows / row buttons the user turned off (BuiltinMenuBit).
     uint32_t builtin_hidden = 0;
+    // Their order per BuiltinMenuSurface; empty = table order.
+    BuiltinMenuOrder builtin_order[static_cast<size_t>(BuiltinMenuSurface::Count)];
 
     void ResetToDefaults();
     // Re-keys the seen catalog through CatalogKey and carries the per-item
@@ -82,6 +84,12 @@ struct ContextMenuPrefs {
         return (builtin_hidden & BuiltinMenuBit(item)) == 0;
     }
     void SetBuiltinVisible(BuiltinMenuItem item, bool on);
+    // Normalized order of a surface (the table order unless the user moved rows).
+    BuiltinMenuOrder BuiltinOrder(BuiltinMenuSurface surface) const;
+    bool BuiltinOrderCustom(BuiltinMenuSurface surface) const;
+    // Stores `order`; the table order is stored as empty.
+    void SetBuiltinOrder(BuiltinMenuSurface surface, const BuiltinMenuOrder& order);
+    void ResetBuiltinOrder();
 
     std::wstring ToJson() const;
     bool FromJson(const std::wstring& json);

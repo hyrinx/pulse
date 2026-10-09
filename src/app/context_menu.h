@@ -147,8 +147,11 @@ BuiltinMenuItem BuiltinItemForCommand(int command);
 // Drops the built-in rows the user hid on the 右键菜单 page from an item or
 // background menu, before the Explorer section is appended. A dropped row's
 // separator moves to the row above it, so groups stay apart without doubling.
+// With a surface, the movable rows first take the user's order for it: they
+// trade places among the slots they occupy and each slot keeps its separator.
 void ApplyBuiltinMenuPrefs(std::vector<ui::FluentMenuItem>& items,
-                           const ContextMenuPrefs& prefs);
+                           const ContextMenuPrefs& prefs,
+                           BuiltinMenuSurface surface = BuiltinMenuSurface::Count);
 
 struct Tab;
 // Uses snapshot metadata only; never probes the filesystem on the UI thread.

@@ -25,6 +25,8 @@ void MainRenderer::DrawPaneHeaderIcon(const D2D1_RECT_F& rc, PaneHeaderIcon icon
     case PaneHeaderIcon::SplitFour: command = I::SplitFour; break;
     case PaneHeaderIcon::View: command = I::List; break;
     case PaneHeaderIcon::Filter: command = I::Filter; break;
+    case PaneHeaderIcon::SwapHorizontal: command = I::SwapHorizontal; break;
+    case PaneHeaderIcon::SwapVertical: command = I::SwapVertical; break;
     }
     MakeBrush(dc, color, brText_);
     command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command,

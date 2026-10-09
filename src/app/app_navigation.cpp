@@ -1829,6 +1829,33 @@ void ApplyLayoutPreset(AppState& s, app::LayoutPreset preset) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
+void SwapSplitPanes(AppState& s) {
+    app::SplitContainer* root = Root(s).get();
+    if (!root || root->is_leaf || !root->first || !root->second ||
+        !root->first->is_leaf || !root->second->is_leaf) return;
+    app::Pane* a = root->first->pane;
+    app::Pane* b = root->second->pane;
+    if (!a || !b || a == b) return;
+    std::swap(root->first->pane, root->second->pane);
+    // Ownership order decides the order when the layout changes later and on
+    // restore, so it follows the tree.
+    auto& owned = Panes(s);
+    const auto find = [&owned](const app::Pane* pane) {
+        return std::find_if(owned.begin(), owned.end(),
+                            [pane](const std::unique_ptr<app::Pane>& p) { return p.get() == pane; });
+    };
+    const auto ia = find(a);
+    const auto ib = find(b);
+    if (ia != owned.end() && ib != owned.end()) std::iter_swap(ia, ib);
+    // Compare inputs are recorded per side; swapping keeps the last pass valid.
+    if (app::LayoutTab* lt = s.window_tabs.Active())
+        std::swap(lt->compare_snap_a, lt->compare_snap_b);
+    s.hoverPaneIndex = -1;
+    s.dropPaneIndex = -1;
+    RememberLayoutFocus(s);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
 // ---------------------------------------------------------------------------
 // Two-pane folder compare
 // ---------------------------------------------------------------------------

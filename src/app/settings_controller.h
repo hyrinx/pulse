@@ -220,6 +220,19 @@ public:
     void Language(std::wstring_view language_id);
     void Wallpaper(int action);
     void ToggleUi(int index);
+    // 本地右键菜单 › Pulse 菜单 tab: 0 on a file, 1 blank area, 2 row buttons.
+    int ContextTab() const { return context_tab_; }
+    // Pulse menu preview: a row pressed for dragging (BuiltinMenuItem), live
+    // once the pointer moved 3 px along the tab's axis. EndMenuDrag drops
+    // the drag; SetMenuOrder saves the order for the current tab.
+    void BeginMenuDrag(int item, float pos, float grab) noexcept;
+    bool MenuDragMove(float pos) noexcept;
+    void EndMenuDrag() noexcept { menu_drag_item_ = -1; menu_drag_live_ = false; }
+    int menu_drag_item() const noexcept { return menu_drag_item_; }
+    bool menu_drag_live() const noexcept { return menu_drag_item_ >= 0 && menu_drag_live_; }
+    float menu_drag_pos() const noexcept { return menu_drag_pos_; }
+    float menu_drag_grab() const noexcept { return menu_drag_grab_; }
+    void SetMenuOrder(const BuiltinMenuOrder& order);
     void IntegrationAction(int index);
     int IntegrationState() const noexcept;
     std::wstring IntegrationSummary() const;
@@ -246,6 +259,7 @@ public:
     void DiagnosticsAction(int action);
 
 private:
+    int context_tab_ = 0;
     friend struct SettingsControllerTestPeer;
 
     struct TaskState {
@@ -260,6 +274,9 @@ private:
     bool global_search_capturing_ = false;
     bool system_exclusion_expanded_ = false;
     int slider_drag_ = -1;
+    int menu_drag_item_ = -1;
+    bool menu_drag_live_ = false;
+    float menu_drag_start_ = 0.0f, menu_drag_pos_ = 0.0f, menu_drag_grab_ = 0.0f;
     std::wstring global_search_error_;
     int page_ = 0;
     float scroll_ = 0.0f;

@@ -22,7 +22,7 @@ enum class Icon {
     Cut, Copy, Paste, Rename, Sort, Filter, List, Grid, Split, Columns,
     Panel, PanelClose, Check, Eye, Info, Home, Tray, Pin, Link,
     Palette, Sliders, Warning, Lock, OpenExternal, StarFilled, More,
-    SplitSingle, SplitStacked, SplitThree, SplitFour, Contrast, Count
+    SplitSingle, SplitStacked, SplitThree, SplitFour, Contrast, SwapHorizontal, SwapVertical, Count
 };
 
 inline Icon FromGlyph(std::wstring_view glyph) noexcept {
@@ -297,6 +297,12 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
     case Icon::SplitThree: box(3,4,21,20); line(12,4,12,20); line(12,12,21,12); break;
     case Icon::SplitFour: box(3,4,21,20); line(12,4,12,20); line(3,12,21,12); break;
     case Icon::Columns: box(3,4,21,20); line(9,4,9,20); line(15,4,15,20); break;
+    case Icon::SwapHorizontal:
+        line(3,8,20,8); path({{16,4},{20,8},{16,12}});
+        line(21,16,4,16); path({{8,12},{4,16},{8,20}}); break;
+    case Icon::SwapVertical:
+        line(8,20,8,3); path({{4,7},{8,3},{12,7}});
+        line(16,4,16,21); path({{12,17},{16,21},{20,17}}); break;
     case Icon::Panel: case Icon::PanelClose:
         box(3,4,21,20); line(15,4,15,20);
         if (icon == Icon::PanelClose) path({{7,9},{10,12},{7,15}});

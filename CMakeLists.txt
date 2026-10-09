@@ -1675,3 +1675,5 @@ if(PULSE_BUILD_PROGRESS_UI_TESTS)
         endif()
     endforeach()
 endif()
+
+include(cmake/setup.cmake)

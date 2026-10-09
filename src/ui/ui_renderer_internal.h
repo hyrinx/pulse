@@ -7,6 +7,7 @@
 #include "typography.h"
 #include "name_highlight.h"
 #include "../app/places.h"
+#include "../app/builtin_menu_items.h"
 #include "../app/search_query.h"
 #include "../common/text_format.h"
 #include "../common/display_path.h"
@@ -1843,6 +1844,127 @@ inline bool SystemGroupChipVisible(const WindowViewModel& vm, int group) {
     return SystemGroupEnabled(vm, group);
 }
 
+inline app::BuiltinMenuSurface PulseMenuSurface(const WindowViewModel& vm) {
+    return vm.settings_context_tab == 1 ? app::BuiltinMenuSurface::Background
+         : vm.settings_context_tab == 2 ? app::BuiltinMenuSurface::RowButtons
+                                        : app::BuiltinMenuSurface::Item;
+}
+// Preview metrics (DIP), shared by layout and drawing.
+inline constexpr float kPulsePreviewTitle = 24.0f, kPulsePreviewRow = 34.0f,
+    kPulsePreviewSwatches = 34.0f, kPulsePreviewSeparator = 9.0f, kPulsePreviewPad = 5.0f;
+// Hint line under the preview box ("drag to reorder").
+inline constexpr float kPulsePreviewHint = 26.0f;
+inline const app::BuiltinMenuOrder& PulseMenuOrder(const WindowViewModel& vm) {
+    return vm.settings_builtin_order[static_cast<size_t>(PulseMenuSurface(vm))];
+}
+inline bool PulseMenuOrderCustom(const WindowViewModel& vm, app::BuiltinMenuSurface surface) {
+    const auto& order = vm.settings_builtin_order[static_cast<size_t>(surface)];
+    return !order.empty() && app::NormalizeBuiltinMenuOrder(surface, order) != app::BuiltinMenuDefaultOrder(surface);
+}
+inline float PulseMenuPreviewHeight(const WindowViewModel& vm, float scale) {
+    if (vm.settings_context_tab == 2) return (kPulsePreviewTitle + 56.0f + kPulsePreviewHint) * scale;
+    float h = 2 * kPulsePreviewPad;
+    for (const auto& r : app::BuiltinMenuVisibleRows(PulseMenuSurface(vm), vm.settings_builtin_hidden, PulseMenuOrder(vm))) {
+        h += kPulsePreviewRow;
+        if (r.row.item == app::BuiltinMenuItem::Tags) h += kPulsePreviewSwatches;
+        if (r.separator_after) h += kPulsePreviewSeparator;
+    }
+    return (kPulsePreviewTitle + h + kPulsePreviewHint) * scale;
+}
+// The menu box inside l.pulse_preview (below the title, above the hint).
+inline D2D1_RECT_F PulsePreviewBox(const D2D1_RECT_F& preview, float scale) {
+    return D2D1::RectF(preview.left, preview.top + kPulsePreviewTitle * scale,
+                       preview.right, preview.bottom - kPulsePreviewHint * scale);
+}
+inline int PulseMenuRowHit(const app::BuiltinMenuRow& row) {
+    return row.fixed != app::BuiltinFixedRow::None ? kSettingsMenuFixedHit + static_cast<int>(row.fixed)
+                                                   : kSettingsMenuRowHit + static_cast<int>(row.item);
+}
+
+// One preview row (the tag swatches belong to the 标签... row) or, on the
+// row-buttons tab, one hover button.
+struct PulsePreviewRow {
+    app::BuiltinMenuRow row{};
+    D2D1_RECT_F rect{};
+    bool separator_after = false;
+};
+struct PulsePreviewLayout {
+    std::vector<PulsePreviewRow> rows; // without the dragged row while dragging
+    bool dragging = false;
+    app::BuiltinMenuRow drag_row{};
+    D2D1_RECT_F ghost{}, gap{};        // floating row; the slot it would land in
+    app::BuiltinMenuOrder order;       // order a drop now would give
+};
+inline std::vector<PulsePreviewRow> LayoutPulsePreviewRows(const WindowViewModel& vm, const app::BuiltinMenuOrder& order,
+                                                           const D2D1_RECT_F& box, float s) {
+    std::vector<PulsePreviewRow> out;
+    if (vm.settings_context_tab == 2) {
+        const auto visible = app::BuiltinMenuVisibleRows(app::BuiltinMenuSurface::RowButtons, vm.settings_builtin_hidden, order);
+        const auto row = D2D1::RectF(box.left + 8 * s, box.top + 12 * s, box.right - 8 * s, box.bottom - 12 * s);
+        out.resize(visible.size());
+        float bx = row.right - 28 * s;
+        for (size_t k = visible.size(); k-- > 0;) {
+            out[k] = { visible[k].row, D2D1::RectF(bx, row.top + 4 * s, bx + 24 * s, row.bottom - 4 * s), false };
+            bx -= 26 * s;
+        }
+        return out;
+    }
+    float y = box.top + kPulsePreviewPad * s;
+    const float x0 = box.left + 6 * s, x1 = box.right - 6 * s;
+    for (const auto& v : app::BuiltinMenuVisibleRows(PulseMenuSurface(vm), vm.settings_builtin_hidden, order)) {
+        const float h = (kPulsePreviewRow + (v.row.item == app::BuiltinMenuItem::Tags ? kPulsePreviewSwatches : 0.0f)) * s;
+        out.push_back({ v.row, D2D1::RectF(x0, y, x1, y + h), v.separator_after });
+        y += h;
+        if (v.separator_after) y += kPulsePreviewSeparator * s;
+    }
+    return out;
+}
+// While a row is dragged, every landing place is tried and the one whose
+// slot is nearest the floating row wins; the rows are laid out as that drop
+// would leave them, so separators and groups preview truthfully.
+inline PulsePreviewLayout LayoutPulsePreview(const WindowViewModel& vm, const D2D1_RECT_F& box, float s) {
+    PulsePreviewLayout l;
+    const auto surface = PulseMenuSurface(vm);
+    const bool horizontal = vm.settings_context_tab == 2;
+    l.order = app::NormalizeBuiltinMenuOrder(surface, PulseMenuOrder(vm));
+    l.rows = LayoutPulsePreviewRows(vm, l.order, box, s);
+    if (vm.settings_menu_drag < 0 || vm.settings_menu_drag >= app::kBuiltinMenuItemCount) return l;
+    const auto dragged = static_cast<app::BuiltinMenuItem>(vm.settings_menu_drag);
+    auto movable = [&](const PulsePreviewRow& r) { return r.row.fixed == app::BuiltinFixedRow::None && r.row.item < app::BuiltinMenuItem::Count; };
+    const auto held = std::find_if(l.rows.begin(), l.rows.end(), [&](const PulsePreviewRow& r) { return movable(r) && r.row.item == dragged; });
+    if (held == l.rows.end()) return l;
+    app::BuiltinMenuOrder rest = l.order;
+    rest.erase(std::remove(rest.begin(), rest.end(), dragged), rest.end());
+    std::vector<app::BuiltinMenuItem> rest_visible;
+    for (const auto& r : l.rows) if (movable(r) && r.row.item != dragged) rest_visible.push_back(r.row.item);
+    if (rest_visible.empty()) return l;
+    const float size = horizontal ? held->rect.right - held->rect.left : held->rect.bottom - held->rect.top;
+    const float lo = horizontal ? box.left : box.top, hi = horizontal ? box.right : box.bottom;
+    const float start = std::clamp(vm.settings_menu_drag_pos - vm.settings_menu_drag_grab, lo, std::max(lo, hi - size));
+    float best = 1e30f;
+    for (size_t p = 0; p <= rest_visible.size(); ++p) {
+        app::BuiltinMenuOrder candidate = rest;
+        auto at = p < rest_visible.size() ? std::find(candidate.begin(), candidate.end(), rest_visible[p])
+                                          : std::find(candidate.begin(), candidate.end(), rest_visible.back()) + 1;
+        candidate.insert(at, dragged);
+        auto rows = LayoutPulsePreviewRows(vm, candidate, box, s);
+        const auto slot = std::find_if(rows.begin(), rows.end(), [&](const PulsePreviewRow& r) { return movable(r) && r.row.item == dragged; });
+        if (slot == rows.end()) continue;
+        const float d = std::abs((horizontal ? slot->rect.left : slot->rect.top) - start);
+        if (d >= best) continue;
+        best = d;
+        l.order = std::move(candidate);
+        l.gap = slot->rect;
+        l.drag_row = slot->row;
+        rows.erase(slot);
+        l.rows = std::move(rows);
+    }
+    l.dragging = true;
+    l.ghost = horizontal ? D2D1::RectF(start, l.gap.top, start + size, l.gap.bottom)
+                         : D2D1::RectF(l.gap.left, start, l.gap.right, start + size);
+    return l;
+}
+
 struct SettingsLayout {
     // Cards 0-4: Explorer groups (with a master switch). Card 5: Pulse's own
     // commands, rows only (context_toggle[5] stays empty).
@@ -1850,6 +1972,10 @@ struct SettingsLayout {
     D2D1_RECT_F context_cards[kContextCards]{}, context_header[kContextCards]{}, context_toggle[kContextCards]{},
         context_empty[kContextCards]{}, context_restore{};
     std::vector<D2D1_RECT_F> context_rows;
+    // Pulse menu card (first on the page): presets (3 = 自定义, display
+    // only), surface tabs, fixed rows of the current tab, live preview.
+    D2D1_RECT_F pulse_card{}, pulse_restore{}, pulse_preset[4]{}, pulse_tabs{}, pulse_tab[3]{},
+        pulse_fixed[2]{}, pulse_preview{}, pulse_order_reset{}, context_other{};
     D2D1_RECT_F duplicate_options{};
     D2D1_RECT_F section[4]{}, group[3]{}, footer{};
     D2D1_RECT_F theme_row{}, theme_tile[3]{}, effect_choice{}, language_choice{};
@@ -2193,10 +2319,69 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
     } else if (vm.settings_page == 2) {
         y += 30*scale;
         l.context_rows.resize(vm.settings_items.size());
-        for(int g=0;g<SettingsLayout::kContextCards;++g) {
+        {
+            // Pulse menu card: header, presets, surface tabs, then the
+            // switch list with a live menu preview on the right.
+            const float left=l.content.left+pad,right=l.content.right-pad,top=y;
+            const float inner=left+54*scale;
+            const float link_w=label_btn_w(l10n::Get(l10n::StringId::RestoreDefaults))-8*scale;
+            l.pulse_restore=D2D1::RectF(right-16*scale-link_w,top+18*scale,right-16*scale,top+46*scale);
+            y=top+72*scale;
+            static constexpr l10n::StringId kPresetDesc[]={l10n::StringId::ContextPresetSlimDesc,l10n::StringId::ContextPresetStandardDesc,
+                l10n::StringId::ContextPresetFullDesc,l10n::StringId::ContextPresetCustomDesc};
+            float px=inner;
+            for(int i=0;i<4;++i) {
+                // Fit the longer caption line (small text is narrower than the button font).
+                const float w=std::max(80*scale,label_btn_w(l10n::Get(kPresetDesc[i]))*0.92f);
+                l.pulse_preset[i]=D2D1::RectF(px,y,px+w,y+48*scale);
+                px+=w+8*scale;
+            }
+            y+=60*scale;
+            static constexpr l10n::StringId kTabs[]={l10n::StringId::ContextTabItem,l10n::StringId::ContextTabBackground,l10n::StringId::ContextTabRow};
+            float tx=inner+3*scale;
+            for(int i=0;i<3;++i) {
+                const float w=std::max(72*scale,label_btn_w(l10n::Get(kTabs[i])));
+                l.pulse_tab[i]=D2D1::RectF(tx,y+3*scale,tx+w,y+33*scale);
+                tx+=w;
+            }
+            l.pulse_tabs=D2D1::RectF(inner,y,tx+3*scale,y+36*scale);
+            y+=52*scale;
+            const bool preview=right-left>=700*scale;
+            const float preview_w=244*scale;
+            const float list_right=preview ? right-24*scale-preview_w-28*scale : right-24*scale;
+            const float list_top=y;
+            const auto rows=app::BuiltinMenuOrderedRows(PulseMenuSurface(vm),PulseMenuOrder(vm));
+            for(size_t k=0;k<rows.size();++k) {
+                const auto& row=rows[k];
+                const auto row_rc=D2D1::RectF(inner,y,list_right,y+44*scale);
+                if(row.fixed!=app::BuiltinFixedRow::None) {
+                    l.pulse_fixed[row.fixed==app::BuiltinFixedRow::Open ? 0 : 1]=row_rc;
+                } else {
+                    const size_t i=vm.settings_builtin_first+static_cast<size_t>(row.item);
+                    if(i<l.context_rows.size()) l.context_rows[i]=row_rc;
+                }
+                y+=44*scale;
+            }
+            float bottom=y;
+            if(preview) {
+                const float h=PulseMenuPreviewHeight(vm,scale);
+                l.pulse_preview=D2D1::RectF(right-24*scale-preview_w,list_top,right-24*scale,list_top+h);
+                if(PulseMenuOrderCustom(vm,PulseMenuSurface(vm))) {
+                    const float order_w=label_btn_w(l10n::Get(l10n::StringId::ContextOrderReset))-8*scale;
+                    l.pulse_order_reset=D2D1::RectF(l.pulse_preview.right-order_w,list_top-4*scale,l.pulse_preview.right,list_top+20*scale);
+                }
+                bottom=std::max(bottom,l.pulse_preview.bottom);
+            }
+            y=bottom+16*scale;
+            l.pulse_card=D2D1::RectF(left,top,right,y);
+            y+=20*scale;
+            l.context_other=D2D1::RectF(left,y,right,y+20*scale);
+            y+=30*scale;
+        }
+        for(int g=0;g<5;++g) {
             const float top=y;
             l.context_header[g]=D2D1::RectF(l.content.left+pad,y,l.content.right-pad,y+76*scale);
-            if(g<5) l.context_toggle[g]=D2D1::RectF(l.content.right-pad-100*scale,y+20*scale,l.content.right-pad-56*scale,y+52*scale);
+            l.context_toggle[g]=D2D1::RectF(l.content.right-pad-100*scale,y+20*scale,l.content.right-pad-56*scale,y+52*scale);
             y+=76*scale;
             if(vm.settings_expanded & (1u<<(g+8))) {
                 for(size_t i=0;i<vm.settings_items.size();++i) if(vm.settings_items[i].group==g) {
@@ -2671,17 +2856,23 @@ NameTrail LayoutNameTrail(float name_x, float text_y, float text_h,
     t.show_star = show_star;
     t.show_more = show_more;
     t.show_new_tab = show_new_tab;
-    if ((allowed_actions & 4u) && (show_more || reserve_actions)) {
-        t.more = D2D1::RectF(dock - btn, by, dock, by + btn);
-        dock = t.more.left - gap;
-    }
-    if ((allowed_actions & 1u) && (show_star || reserve_actions)) {
-        t.star = D2D1::RectF(dock - btn, by, dock, by + btn);
-        dock = t.star.left - gap;
-    }
-    if ((allowed_actions & 2u) && (show_new_tab || (reserve_actions && !compact_actions))) {
-        t.new_tab = D2D1::RectF(dock - btn, by, dock, by + btn);
-        dock = t.new_tab.left - gap;
+    // Left-to-right order from bits 3-8 (0 star, 1 new tab, 2 more); the
+    // rightmost button docks first. Default: new tab, star, more.
+    int order[3] = { 1, 0, 2 };
+    if (const unsigned code = (allowed_actions >> 3) & 0x3Fu; code != 0)
+        for (int i = 0; i < 3; ++i) order[i] = static_cast<int>((code >> (2 * i)) & 3u);
+    for (int i = 2; i >= 0; --i) {
+        if (order[i] == 2 && (allowed_actions & 4u) && (show_more || reserve_actions)) {
+            t.more = D2D1::RectF(dock - btn, by, dock, by + btn);
+            dock = t.more.left - gap;
+        } else if (order[i] == 0 && (allowed_actions & 1u) && (show_star || reserve_actions)) {
+            t.star = D2D1::RectF(dock - btn, by, dock, by + btn);
+            dock = t.star.left - gap;
+        } else if (order[i] == 1 && (allowed_actions & 2u) &&
+                   (show_new_tab || (reserve_actions && !compact_actions))) {
+            t.new_tab = D2D1::RectF(dock - btn, by, dock, by + btn);
+            dock = t.new_tab.left - gap;
+        }
     }
     t.line_w = std::max(0.0f, dock - name_x);
 

@@ -43,4 +43,12 @@ void RunRecentChangesMenuChecks(Check check) {
     check(std::count_if(menu.begin(), menu.end(), [](const auto& item) {
         return item.command == app::CmdViewRecentChanges;
     }) == 1, "native menu merge preserves exactly one built-in recent changes command");
+    auto item_menu = app::BuildItemMenu(false, {}, true);
+    app::AppendRecentChangesCommand(item_menu, L"C:\\real");
+    check(item_menu.size() > 3 && item_menu[2].command == app::CmdViewRecentChanges &&
+        !item_menu[1].quick_swatches.empty(), "item menu shows recent changes right after the action strip");
+    auto background = app::BuildBackgroundMenu(true, true, L"");
+    app::AppendRecentChangesCommand(background, L"C:\\real");
+    check(background.size() > 2 && background[background.size() - 2].command == app::CmdViewRecentChanges &&
+        background.back().command == app::CmdUndo, "blank-area menu shows recent changes right above undo");
 }

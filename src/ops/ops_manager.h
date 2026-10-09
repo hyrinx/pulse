@@ -101,6 +101,10 @@ struct OpStatus {
     bool can_pause = true;
     AuthorizationState authorization = AuthorizationState::None;
     bool can_skip_authorization = false;
+    // ActionRequired only: "Retry" was chosen and the attempt is in flight
+    // without a UAC prompt (reused elevated session). The dialog keeps the
+    // same view and disables its actions instead of switching views.
+    bool authorization_retrying = false;
     OpType type = OpType::Copy;
     OpPhase phase = OpPhase::Completed;
     uint64_t task_id = 0;

@@ -62,6 +62,9 @@ void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,
 void NavigateTo(AppState& s, const std::wstring& path);
 void FocusPane(AppState& s, app::Pane* p);
 void ApplyLayoutPreset(AppState& s, app::LayoutPreset preset);
+// Two-pane layouts: the panes trade places (tabs, history, selection and view go
+// with them); the divider position stays.
+void SwapSplitPanes(AppState& s);
 // Two-pane folder compare.
 void UpdateFolderCompare(AppState& s);
 void SetFolderCompare(AppState& s, bool on);
